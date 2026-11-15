@@ -1,0 +1,13 @@
+{
+  "deviceId": "PARK-01",
+  "totalSlots": 7,
+  "slot1Occupied": true,
+  "slot2Occupied": true,
+  "slot3Occupied": true,
+  "slot4Occupied": true,
+  "vipOccupied": true,
+  "accessibilityOccupied": true,
+  "maternityOccupied": true,
+  "reservedSlots": 0,
+  "warningMessage": "PARKING FULL"
+}
