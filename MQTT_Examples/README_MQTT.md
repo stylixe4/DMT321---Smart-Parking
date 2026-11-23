@@ -25,6 +25,7 @@ Unity (ฉาก SmartParkNew) เชื่อม MQTT ผ่านคอมโ�
 | `.../ack` | Unity → ภายนอก | | ผลของคำสั่ง `{"ok":true,"cmd":"spawn","slot":3,"message":"..."}` |
 | `.../cmd` | ภายนอก → Unity | | คำสั่ง (ด้านล่าง) |
 | `.../sensor/{1-7}` | ภายนอก → Unity | | `1` = มีรถ, `0` = ว่าง (รับ `true/false`, `occupied/free`, `{"occupied":true}` ได้ด้วย) |
+| `.../gate/{enter,exit}` | ภายนอก → Unity | | สั่งเปิดไม้กั้นทางเข้า หรือ ไม้กั้นทางออก ชั่วคราว 3 วินาที (จาก RFID / เซนเซอร์ทางออก) |
 
 หมายเลขช่อง: 1-4 = ช่องปกติ, 5 = V.I.P, 6 = Accessibility, 7 = Maternity (ตรงกับปุ่ม SLOT 1-7 บนจอ)
 
@@ -77,17 +78,23 @@ Unity (ฉาก SmartParkNew) เชื่อม MQTT ผ่านคอมโ�
 
 ```bash
 pip install paho-mqtt
-python parking_mqtt_tool.py monitor          # ดูสถานะ
-python parking_mqtt_tool.py cmd "speed 10"   # ส่งคำสั่ง
-python parking_mqtt_tool.py sensor 2 1       # จำลองเซนเซอร์ช่อง 2 มีรถ
-python parking_mqtt_tool.py simulate         # สุ่มรถเข้า-ออกช่อง 1-4
+python parking_mqtt_tool.py monitor          # ดูสถานะที่ Unity ส่งออกมา
+python parking_mqtt_tool.py cmd "speed 10"   # ส่งคำสั่งเร่งเวลา
+python parking_mqtt_tool.py sensor 1 1       # จำลองเซนเซอร์ช่อง 1 มีรถ (เสกรถเข้าช่อง 1)
+python parking_mqtt_tool.py sensor 1 0       # จำลองเซนเซอร์ช่อง 1 ว่าง (เอารถออกจากช่อง 1)
+python parking_mqtt_tool.py gate enter       # จำลองแตะบัตร RFID เปิดไม้กั้นทางเข้า
+python parking_mqtt_tool.py gate exit        # จำลองผ่านเซนเซอร์ทางออกเปิดไม้กั้นทางออก
+python parking_mqtt_tool.py simulate         # สุ่มรถเข้า-ออกช่อง 1-4 อัตโนมัติ
 ```
 
 ## ฮาร์ดแวร์จริง (ESP32)
 
-`esp32/SmartParkingSensor/SmartParkingSensor.ino` — ESP32 + HC-SR04 ต่อช่องละตัว
-ส่ง `.../sensor/{n}` เมื่อสถานะเปลี่ยน (มีหน่วงกันค่ากระโดด 1.5 วินาที) และรับ `.../slot/{n}` กลับมาเปิดไฟ LED
-แดง/เขียว (กระพริบเมื่อจอดเกิน 2 ชม.) ต้องลงไลบรารี **PubSubClient** และแก้ชื่อ/รหัส WiFi ก่อนอัปโหลด
+ซอร์สโค้ดฉบับเต็ม: `esp32/SmartParking_ESP32/SmartParking_ESP32.ino`
+- อ้างอิงวงจรและสเปกขาตาม `smart parking arduino guide.pdf`
+- รวม Wi-Fi + MQTT + RFID RC522 + Servo SG90 + HC-SR04 x8 + Dual LED x7 + LCD 1602A
+- แก้ไขปัญหาขา 26 ชนกันระหว่าง Exit Echo กับ LED ช่อง 7 โดยย้าย LED ช่อง 7 ไปขา GPIO 3 (RX0)
+- แมปช่องจอดตรงกับ Unity: ช่อง VIP 1-3 บนบอร์ดจะไปโผล่ที่ Slot 5, 6, 7 ใน Unity, และช่องทั่วไป 1-4 จะไปโผล่ที่ Slot 1-4 ใน Unity
+- ช่อง Reserve ทั้ง 3 ช่อง (VIP, Accessibility, Maternity) เมื่อรถออกจะคืนสถานะเป็น Reserve อัตโนมัติเสมอ
 
 ## ใช้จากสคริปต์อื่นใน Unity
 

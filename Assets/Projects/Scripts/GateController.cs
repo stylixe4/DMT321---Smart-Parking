@@ -10,24 +10,51 @@ public class GateController : MonoBehaviour
     private Quaternion closedRot;
     private Quaternion openRot;
     private int carsInZone = 0;        // นับจำนวนรถที่อยู่ในระยะเซนเซอร์
+    private float externalOpenTimer = 0f; // เวลาเปิดค้างตามคำสั่งภายนอก (RFID / MQTT)
+    private bool initialized = false;
+
+    private void Awake()
+    {
+        InitRotations();
+    }
 
     private void Start()
     {
-        if (gateArm != null)
-        {
-            closedRot = gateArm.localRotation; // จำท่าปิดเริ่มต้นไว้
-            openRot = closedRot * Quaternion.Euler(openRotation); // คำนวณท่าเปิด
-        }
+        InitRotations();
+    }
+
+    private void InitRotations()
+    {
+        if (initialized || gateArm == null) return;
+        closedRot = gateArm.localRotation; // จำท่าปิดเริ่มต้นไว้
+        openRot = closedRot * Quaternion.Euler(openRotation); // คำนวณท่าเปิด
+        initialized = true;
     }
 
     private void Update()
     {
         if (gateArm == null) return;
 
-        // ถ้ารถอยู่ในระยะเซนเซอร์อย่างน้อย 1 คัน ให้ยกขึ้น ไม่อย่างนั้นให้ลดลง
-        Quaternion targetRot = (carsInZone > 0) ? openRot : closedRot;
+        if (externalOpenTimer > 0f)
+        {
+            externalOpenTimer -= Time.deltaTime;
+        }
+
+        // ถ้ารถอยู่ในระยะเซนเซอร์ หรือได้รับคำสั่งเปิดจาก RFID/MQTT ให้ยกขึ้น ไม่อย่างนั้นให้ลดลง
+        bool shouldOpen = carsInZone > 0 || externalOpenTimer > 0f;
+        Quaternion targetRot = shouldOpen ? openRot : closedRot;
         gateArm.localRotation = Quaternion.Slerp(gateArm.localRotation, targetRot, Time.deltaTime * smoothSpeed);
     }
+
+    // สั่งเปิดไม้กั้นเป็นเวลาชั่วคราว (เช่น แตะบัตร RFID ทางเข้า หรือ เซนเซอร์ทางออกตรวจจับได้)
+    public void TriggerOpen(float duration = 3f)
+    {
+        InitRotations();
+        externalOpenTimer = Mathf.Max(externalOpenTimer, duration);
+    }
+
+    [ContextMenu("Test Open (3s)")]
+    private void TestOpen() => TriggerOpen(3f);
 
     private void OnTriggerEnter(Collider other)
     {

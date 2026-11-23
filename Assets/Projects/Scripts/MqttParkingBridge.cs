@@ -51,6 +51,8 @@ public class MqttParkingBridge : MonoBehaviour
     [Header("อ้างอิง")]
     public ParkingLotManager manager;
     public SlotCarSpawner spawner;
+    public GateController entranceGate;
+    public GateController exitGate;
     public TMP_Text statusText;
     public Image statusDot;
     [Tooltip("ให้เกมทำงานต่อแม้หน้าต่างไม่ได้โฟกัส (แดชบอร์ดจะอัปเดตตลอด)")]
@@ -88,6 +90,16 @@ public class MqttParkingBridge : MonoBehaviour
     {
         if (manager == null) manager = FindFirstObjectByType<ParkingLotManager>();
         if (spawner == null) spawner = FindFirstObjectByType<SlotCarSpawner>();
+        if (entranceGate == null)
+        {
+            var go = GameObject.Find("EntranceSensor");
+            if (go != null) entranceGate = go.GetComponent<GateController>();
+        }
+        if (exitGate == null)
+        {
+            var go = GameObject.Find("ExitSensor");
+            if (go != null) exitGate = go.GetComponent<GateController>();
+        }
     }
 
     private void Start()
@@ -160,6 +172,7 @@ public class MqttParkingBridge : MonoBehaviour
         });
         if (acceptCommands) client.Subscribe(BaseTopic + "/cmd");
         if (acceptSensorTopics) client.Subscribe(BaseTopic + "/sensor/+");
+        client.Subscribe(BaseTopic + "/gate/+");
         client.Start();
         Log($"กำลังเชื่อมต่อ {brokerHost}:{brokerPort} (client id: {id}) topic: {BaseTopic}/#");
     }
@@ -192,6 +205,12 @@ public class MqttParkingBridge : MonoBehaviour
         client.Publish(BaseTopic + "/cmd", command, false);
         Log($"ส่งคำสั่งทดสอบ → {BaseTopic}/cmd : {command}");
     }
+
+    [ContextMenu("MQTT/Test: Open Entrance Gate")]
+    public void TestOpenEntrance() => OpenGate("enter", 3f);
+
+    [ContextMenu("MQTT/Test: Open Exit Gate")]
+    public void TestOpenExit() => OpenGate("exit", 3f);
 
     [ContextMenu("MQTT/Test: toggle Slot 1 via broker")]
     private void TestToggleSlot1() => SendCommandViaBroker("toggle 1");
@@ -342,6 +361,7 @@ public class MqttParkingBridge : MonoBehaviour
         string topic = message.Topic;
         string text = message.Text.Trim();
 
+        // 1. รับคำสั่งควบคุมทั่วไป (.../cmd)
         if (topic == BaseTopic + "/cmd")
         {
             if (message.Retained) return; // ไม่ทำคำสั่งเก่าที่ค้างอยู่ใน broker ซ้ำ
@@ -351,13 +371,25 @@ public class MqttParkingBridge : MonoBehaviour
             return;
         }
 
+        // 2. รับคำสั่งเปิดไม้กั้น (.../gate/enter, .../gate/exit) จาก RFID หรือเซนเซอร์ทางออก
+        string gatePrefix = BaseTopic + "/gate/";
+        if (topic.StartsWith(gatePrefix, StringComparison.Ordinal))
+        {
+            string gateTarget = topic.Substring(gatePrefix.Length).Trim().ToLowerInvariant();
+            Log($"ไม้กั้น ← {topic} : {text}");
+            OpenGate(gateTarget, 3f);
+            return;
+        }
+
+        // 3. รับค่าเซนเซอร์ช่องจอด (.../sensor/1..7 หรือ .../sensor/vip ...)
         string sensorPrefix = BaseTopic + "/sensor/";
         if (topic.StartsWith(sensorPrefix, StringComparison.Ordinal))
         {
-            string key = topic.Substring(sensorPrefix.Length);
-            if (!int.TryParse(key, NumberStyles.Integer, CultureInfo.InvariantCulture, out int slotNumber))
+            string key = topic.Substring(sensorPrefix.Length).Trim().ToLowerInvariant();
+            int slotNumber = ParseSlotKey(key);
+            if (slotNumber < 1 || slotNumber > 7)
             {
-                Debug.LogWarning($"[MQTT] topic เซนเซอร์ต้องลงท้ายด้วยหมายเลขช่อง 1-7: {topic}");
+                Debug.LogWarning($"[MQTT] topic เซนเซอร์ไม่ถูกต้อง ({key}): {topic}");
                 return;
             }
             if (!TryParseOccupied(text, out bool occupied))
@@ -431,8 +463,71 @@ public class MqttParkingBridge : MonoBehaviour
             case "status":
                 PublishStatus(true);
                 return CommandResult.Ok(cmd, 0, "ส่งสถานะแล้ว");
+            case "gate":
+            case "open":
+            {
+                string target = !string.IsNullOrEmpty(c.target) ? c.target : (c.slot == 2 ? "exit" : "enter");
+                OpenGate(target, 3f);
+                return CommandResult.Ok(cmd, 0, $"เปิดไม้กั้น {target} 3 วินาที");
+            }
             default:
                 return CommandResult.Fail(cmd, c.slot, "ไม่รู้จักคำสั่งนี้");
+        }
+    }
+
+    // แปลงชื่อ topic หรือหมายเลขช่องเป็นหมายเลข Slot 1-7 ใน Unity
+    private int ParseSlotKey(string key)
+    {
+        if (int.TryParse(key, NumberStyles.Integer, CultureInfo.InvariantCulture, out int num))
+            return num;
+        switch (key)
+        {
+            case "vip":
+            case "vip1":
+                return 5;
+            case "accessibility":
+            case "access":
+            case "disabled":
+            case "vip2":
+                return 6;
+            case "maternity":
+            case "vip3":
+                return 7;
+            case "normal1": return 1;
+            case "normal2": return 2;
+            case "normal3": return 3;
+            case "normal4": return 4;
+            default: return -1;
+        }
+    }
+
+    // คำสั่งเปิดไม้กั้นทางเข้า หรือ ไม้กั้นทางออก
+    public void OpenGate(string target, float duration = 3f)
+    {
+        target = target.Trim().ToLowerInvariant();
+        if (target.Contains("enter") || target.Contains("in") || target == "1")
+        {
+            if (entranceGate != null)
+            {
+                entranceGate.TriggerOpen(duration);
+                Log($"[Gate] ไม้กั้นทางเข้าเปิด {duration:0.#} วินาที");
+            }
+            else Debug.LogWarning("[MQTT] ไม่พบ GateController ของไม้กั้นทางเข้า (EntranceSensor)");
+        }
+        else if (target.Contains("exit") || target.Contains("out") || target == "2")
+        {
+            if (exitGate != null)
+            {
+                exitGate.TriggerOpen(duration);
+                Log($"[Gate] ไม้กั้นทางออกเปิด {duration:0.#} วินาที");
+            }
+            else Debug.LogWarning("[MQTT] ไม่พบ GateController ของไม้กั้นทางออก (ExitSensor)");
+        }
+        else if (target == "all" || target == "both")
+        {
+            if (entranceGate != null) entranceGate.TriggerOpen(duration);
+            if (exitGate != null) exitGate.TriggerOpen(duration);
+            Log($"[Gate] ไม้กั้นทั้งสองฝั่งเปิด {duration:0.#} วินาที");
         }
     }
 
@@ -513,17 +608,19 @@ public class MqttParkingBridge : MonoBehaviour
             if (json == null) return null;
             c.cmd = json.cmd;
             c.slot = json.slot;
+            c.target = json.target;
             c.value = json.value;
             c.state = json.state;
             c.hasState = text.Contains("\"state\"");
             return c;
         }
 
-        // ข้อความสั้น เช่น "spawn 3", "speed 10", "speed 10x"
+        // ข้อความสั้น เช่น "spawn 3", "speed 10", "speed 10x", "gate enter", "open exit"
         var parts = text.Split(new[] { ' ', '\t', ',', ':', '=' }, StringSplitOptions.RemoveEmptyEntries);
         c.cmd = parts[0];
         if (parts.Length > 1)
         {
+            c.target = parts[1];
             string arg = parts[1].TrimEnd('x', 'X');
             if (float.TryParse(arg, NumberStyles.Float, CultureInfo.InvariantCulture, out float number))
             {
@@ -601,6 +698,7 @@ public class MqttParkingBridge : MonoBehaviour
     {
         public string cmd;
         public int slot;
+        public string target;
         public float value = float.NaN;
         public bool state;
     }
@@ -609,6 +707,7 @@ public class MqttParkingBridge : MonoBehaviour
     {
         public string cmd;
         public int slot;
+        public string target;
         public float value = float.NaN;
         public bool state;
         public bool hasState;

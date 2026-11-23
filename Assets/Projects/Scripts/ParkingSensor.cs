@@ -32,6 +32,8 @@ public class ParkingSensor : MonoBehaviour
 
     [Header("สถานะการจอง")]
     public bool isReserved = false; // ติ๊กถูกใน Inspector เพื่อทดสอบสถานะ "จอง" (กดตอน Play ได้ UI จะอัปเดตทันที)
+    [Tooltip("หากติ๊กถูก เมื่อรถออกจากช่อง ช่องนี้จะกลับไปเป็นสถานะจอง (Reserve) อัตโนมัติเสมอ")]
+    public bool autoRestoreReserve = false;
 
     // แจ้งเตือนทุกครั้งที่สถานะช่องนี้เปลี่ยน (มีรถเข้า/ออก, จอง/ยกเลิกจอง)
     public event Action<ParkingSensor> StatusChanged;
@@ -50,8 +52,23 @@ public class ParkingSensor : MonoBehaviour
     // จอดเกินเวลาที่กำหนดหรือยัง (ถ้าใช่ ไฟจะกระพริบ)
     public bool IsOverstay { get; private set; }
 
+    private void Awake()
+    {
+        // ช่องจอดพิเศษ (VIP, Accessibility, Maternity) จะเป็นช่อง Reserve ถาวร
+        if (slotType != ParkingSlotType.Normal)
+        {
+            isReserved = true;
+            autoRestoreReserve = true;
+        }
+    }
+
     private void Start()
     {
+        if (slotType != ParkingSlotType.Normal)
+        {
+            isReserved = true;
+            autoRestoreReserve = true;
+        }
         UpdateLightColor();
     }
 
@@ -80,6 +97,7 @@ public class ParkingSensor : MonoBehaviour
         {
             ParkedSeconds = 0f;
             IsOverstay = false;
+            if (autoRestoreReserve) isReserved = true; // คืนสถานะจองทันทีเมื่อรถหายไป
         }
         UpdateLightColor();
         NotifyChanged();
@@ -94,7 +112,8 @@ public class ParkingSensor : MonoBehaviour
         if (carsInside.Add(other))
         {
             if (wasEmpty) ParkedSeconds = 0f; // เริ่มนับเวลาจอดใหม่
-            isReserved = false; // เมื่อรถที่จองขับเข้ามาจอดแล้ว ให้เคลียร์สถานะจองออก
+            // ถ้าไม่ใช่ช่อง Reserve ถาวร ให้เคลียร์สถานะจองออก แต่ถ้าเป็น Reserve ถาวร ให้คง isReserved ไว้ (เพราะ IsReserved จะเป็น false อัตโนมัติเมื่อ IsOccupied เป็นจริง)
+            if (!autoRestoreReserve) isReserved = false;
             UpdateLightColor();
             NotifyChanged();
         }
@@ -111,6 +130,7 @@ public class ParkingSensor : MonoBehaviour
             {
                 ParkedSeconds = 0f;
                 IsOverstay = false; // รถออกแล้ว หยุดกระพริบ
+                if (autoRestoreReserve) isReserved = true; // คืนสถานะ Reserve ทันทีเมื่อรถออกจากช่อง
             }
             UpdateLightColor();
             NotifyChanged();

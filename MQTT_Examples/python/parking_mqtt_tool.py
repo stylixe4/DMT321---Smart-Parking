@@ -7,6 +7,8 @@ Smart Parking Twin - เครื่องมือทดสอบ MQTT (Python)
   python parking_mqtt_tool.py cmd "spawn 3"           # สั่งเสกรถลงช่อง 3
   python parking_mqtt_tool.py cmd '{"cmd":"speed","value":10}'
   python parking_mqtt_tool.py sensor 2 1              # จำลองเซนเซอร์ช่อง 2 ว่ามีรถ (0 = ว่าง)
+  python parking_mqtt_tool.py gate enter              # สั่งเปิดไม้กั้นทางเข้า
+  python parking_mqtt_tool.py gate exit               # สั่งเปิดไม้กั้นทางออก
   python parking_mqtt_tool.py simulate                # สุ่มรถเข้า-ออกช่อง 1-4 เรื่อยๆ (Ctrl+C หยุด)
 
 ตัวเลือก: --host broker.hivemq.com --port 1883 --root dmt321/smartparking --device PARK-01
@@ -77,7 +79,7 @@ def publish_once(args, topic, payload):
 
 def main():
     p = argparse.ArgumentParser(description="Smart Parking Twin MQTT tool")
-    p.add_argument("mode", choices=["monitor", "cmd", "sensor", "simulate"])
+    p.add_argument("mode", choices=["monitor", "cmd", "sensor", "gate", "simulate"])
     p.add_argument("args", nargs="*")
     p.add_argument("--host", default="broker.hivemq.com")
     p.add_argument("--port", type=int, default=1883)
@@ -97,6 +99,10 @@ def main():
         if not args.args:
             sys.exit('ต้องระบุคำสั่ง เช่น  cmd "spawn 3"')
         publish_once(args, f"{base}/cmd", " ".join(args.args))
+
+    elif args.mode == "gate":
+        target = args.args[0] if args.args else "enter"
+        publish_once(args, f"{base}/gate/{target}", "open")
 
     elif args.mode == "sensor":
         if len(args.args) != 2:

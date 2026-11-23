@@ -7287,6 +7287,7 @@ MonoBehaviour:
   blinkInterval: 0.5
   blinkOffMaterial: {fileID: 2100000, guid: d5bec6b92176ccb438e8ad432f93b086, type: 2}
   isReserved: 0
+  autoRestoreReserve: 0
 --- !u!65 &153227682
 BoxCollider:
   m_ObjectHideFlags: 0
@@ -8215,6 +8216,7 @@ MonoBehaviour:
   blinkInterval: 0.5
   blinkOffMaterial: {fileID: 2100000, guid: d5bec6b92176ccb438e8ad432f93b086, type: 2}
   isReserved: 0
+  autoRestoreReserve: 0
 --- !u!1 &170545498
 GameObject:
   m_ObjectHideFlags: 0
@@ -11269,6 +11271,7 @@ MonoBehaviour:
   blinkInterval: 0.5
   blinkOffMaterial: {fileID: 2100000, guid: d5bec6b92176ccb438e8ad432f93b086, type: 2}
   isReserved: 0
+  autoRestoreReserve: 0
 --- !u!65 &237883831
 BoxCollider:
   m_ObjectHideFlags: 0
@@ -26277,7 +26280,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: 944dd5cffc12e404eb364b556bc96eb6, type: 2}
+  - {fileID: 2100000, guid: 0f15be0ea467e1649b6336b30246d622, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -72141,7 +72144,8 @@ MonoBehaviour:
   blueMaterial: {fileID: 2100000, guid: 0f15be0ea467e1649b6336b30246d622, type: 2}
   blinkInterval: 0.5
   blinkOffMaterial: {fileID: 2100000, guid: d5bec6b92176ccb438e8ad432f93b086, type: 2}
-  isReserved: 0
+  isReserved: 1
+  autoRestoreReserve: 1
 --- !u!65 &1372394415
 BoxCollider:
   m_ObjectHideFlags: 0
@@ -80070,6 +80074,8 @@ MonoBehaviour:
   acceptSensorTopics: 1
   manager: {fileID: 1547865518}
   spawner: {fileID: 1547865519}
+  entranceGate: {fileID: 1074650528}
+  exitGate: {fileID: 1002356209}
   statusText: {fileID: 1818391428}
   statusDot: {fileID: 1466956392}
   keepRunningInBackground: 1
@@ -84218,6 +84224,7 @@ MonoBehaviour:
   blinkInterval: 0.5
   blinkOffMaterial: {fileID: 2100000, guid: d5bec6b92176ccb438e8ad432f93b086, type: 2}
   isReserved: 0
+  autoRestoreReserve: 0
 --- !u!65 &1641615099
 BoxCollider:
   m_ObjectHideFlags: 0
@@ -95298,6 +95305,7 @@ MonoBehaviour:
   blinkInterval: 0.5
   blinkOffMaterial: {fileID: 2100000, guid: d5bec6b92176ccb438e8ad432f93b086, type: 2}
   isReserved: 1
+  autoRestoreReserve: 1
 --- !u!65 &1825358675
 BoxCollider:
   m_ObjectHideFlags: 0
@@ -103445,7 +103453,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: 944dd5cffc12e404eb364b556bc96eb6, type: 2}
+  - {fileID: 2100000, guid: 0f15be0ea467e1649b6336b30246d622, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -106225,7 +106233,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: 944dd5cffc12e404eb364b556bc96eb6, type: 2}
+  - {fileID: 2100000, guid: 0f15be0ea467e1649b6336b30246d622, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -110715,6 +110723,7 @@ MonoBehaviour:
   blinkInterval: 0.5
   blinkOffMaterial: {fileID: 2100000, guid: d5bec6b92176ccb438e8ad432f93b086, type: 2}
   isReserved: 1
+  autoRestoreReserve: 1
 --- !u!65 &2112766328
 BoxCollider:
   m_ObjectHideFlags: 0
