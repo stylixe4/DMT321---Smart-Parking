@@ -31,8 +31,8 @@
 // ====================================================================================
 // 1. ตั้งค่า Wi-Fi & MQTT Broker
 // ====================================================================================
-const char* WIFI_SSID       = "YOUR_WIFI_SSID";         // เปลี่ยนเป็นชื่อ Wi-Fi ของคุณ
-const char* WIFI_PASSWORD   = "YOUR_WIFI_PASSWORD";     // เปลี่ยนเป็นรหัสผ่าน Wi-Fi
+const char* WIFI_SSID       = "Supakin_5G";         // เปลี่ยนเป็นชื่อ Wi-Fi ของคุณ
+const char* WIFI_PASSWORD   = "100589549";     // เปลี่ยนเป็นรหัสผ่าน Wi-Fi
 const char* MQTT_BROKER     = "broker.hivemq.com";      // หรือ IP ของ Mosquitto ในวง LAN
 const int   MQTT_PORT       = 1883;
 
