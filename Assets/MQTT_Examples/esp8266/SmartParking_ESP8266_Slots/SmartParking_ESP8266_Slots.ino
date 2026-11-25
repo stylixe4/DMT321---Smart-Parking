@@ -28,6 +28,7 @@
 
   การทำงาน
     - รถเข้า/ออกช่อง (< 8 cm)  -> เปลี่ยนสีไฟ + ส่ง .../sensor/{เลขช่อง} = 1/0 (Unity เสกรถ/เอารถออก)
+    - รถในเกมจอดช่อง           -> ไฟแดงติดด้วย (อ่านจาก .../slot/{เลขช่อง} ที่ Unity ส่งมา)
     - จอดเกิน 2 ชั่วโมง          -> ไฟแดงกระพริบ (หรือเมื่อ Unity แจ้ง overstay ซึ่งเร่งเวลาได้ด้วยปุ่ม TIME SPEED)
 */
 
@@ -86,6 +87,8 @@ struct Slot {
     bool          occupied;      // สถานะที่ยืนยันแล้ว
     uint8_t       agree;         // นับค่าที่อ่านได้ต่างจากเดิมติดกัน
     unsigned long parkedAt;
+    bool          owedFree;      // รถจริงออกตอนเน็ตหลุด ยังไม่ได้บอก Unity
+    bool          twinOccupied;  // ในเกมมีรถจอดช่องนี้ (ค่าจาก Unity)
     bool          twinOverstay;  // ค่าจาก Unity
     LedState      ledShown;
     char          sensorTopic[96];
@@ -129,16 +132,20 @@ void setLed(uint8_t i, LedState s) {
     }
 }
 
+// ช่องมีรถ ถ้าเซนเซอร์จริงเจอรถ หรือในเกมมีรถจอดอยู่
+bool showOccupied(const Slot& s) {
+    return s.occupied || (twinOnline && s.twinOccupied);
+}
+
 bool isOverstay(const Slot& s) {
-    if (!s.occupied) return false;
-    if (millis() - s.parkedAt >= OVERSTAY_MS) return true;
-    return twinOnline && s.twinOverstay;
+    if (s.occupied && millis() - s.parkedAt >= OVERSTAY_MS) return true;
+    return showOccupied(s) && twinOnline && s.twinOverstay;
 }
 
 void updateLeds() {
     bool blinkOn = (millis() / 500) % 2 == 0;
     for (uint8_t i = 0; i < 3; i++) {
-        if (!slots[i].occupied) setLed(i, LED_FREE);
+        if (!showOccupied(slots[i])) setLed(i, LED_FREE);
         else if (isOverstay(slots[i])) setLed(i, blinkOn ? LED_RED : LED_OFF);
         else setLed(i, LED_RED);
     }
@@ -159,14 +166,32 @@ long readDistanceCm(uint8_t echoPin) {
     return (long)(us / 58UL);                            // แปลงเป็น cm
 }
 
-void publishSlot(uint8_t i) {
-    if (!mqtt.connected()) return;
-    mqtt.publish(slots[i].sensorTopic, slots[i].occupied ? "1" : "0");
-    Serial.printf("[SLOT %d] -> %s = %s\n", UNITY_SLOTS[i], slots[i].sensorTopic, slots[i].occupied ? "1" : "0");
+bool sendSlot(uint8_t i, bool occupied) {
+    if (!mqtt.connected()) return false;
+    Serial.printf("[SLOT %d] -> %s = %s\n", UNITY_SLOTS[i], slots[i].sensorTopic, occupied ? "1" : "0");
+    return mqtt.publish(slots[i].sensorTopic, occupied ? "1" : "0");
 }
 
-void publishAllSlots() {
-    for (uint8_t i = 0; i < 3; i++) publishSlot(i);
+// เรียกตอนเซนเซอร์จริงเปลี่ยนสถานะ
+void reportSlotChange(uint8_t i) {
+    Slot& s = slots[i];
+    if (s.occupied) {
+        s.owedFree = false;
+        sendSlot(i, true);
+    } else {
+        s.owedFree = !sendSlot(i, false);   // ส่งไม่ได้ (เน็ตหลุด) ค่อยส่งตอนต่อกลับ
+    }
+}
+
+// เรียกตอนเพิ่งต่อ MQTT หรือ Unity เพิ่งออนไลน์
+// ส่ง "0" เฉพาะช่องที่รถจริงออกไประหว่างเน็ตหลุด เพราะ Unity จะลบรถในช่องเมื่อได้ "0"
+// (ถ้าส่ง "0" ทุกครั้งที่ต่อเน็ต รถที่จอดอยู่ในเกมจะหายไป)
+void syncAllSlots() {
+    for (uint8_t i = 0; i < 3; i++) {
+        Slot& s = slots[i];
+        if (s.occupied) sendSlot(i, true);
+        else if (s.owedFree && sendSlot(i, false)) s.owedFree = false;
+    }
 }
 
 void updateSensor(uint8_t i) {
@@ -185,12 +210,22 @@ void updateSensor(uint8_t i) {
     s.parkedAt     = millis();
     s.twinOverstay = false;
     Serial.printf("[SLOT %d] %s (%ld cm)\n", UNITY_SLOTS[i], reading ? "รถเข้าจอด" : "รถออก", cm);
-    publishSlot(i);
+    reportSlotChange(i);
 }
 
 // ====================================================================================
 // 7. MQTT
 // ====================================================================================
+// อ่านค่า true/false จาก JSON ของ Unity เช่น "occupied":true
+bool jsonBool(const char* json, const char* key, bool& out) {
+    char pattern[32];
+    snprintf(pattern, sizeof(pattern), "\"%s\":", key);
+    const char* p = strstr(json, pattern);
+    if (p == nullptr) return false;
+    out = strncmp(p + strlen(pattern), "true", 4) == 0;
+    return true;
+}
+
 void onMqttMessage(char* topic, byte* payload, unsigned int length) {
     if (length >= sizeof(msgBuf)) length = sizeof(msgBuf) - 1;
     memcpy(msgBuf, payload, length);
@@ -200,18 +235,19 @@ void onMqttMessage(char* topic, byte* payload, unsigned int length) {
     if (strcmp(topic, topicTwinOnline) == 0) {
         bool wasOnline = twinOnline;
         twinOnline = strcmp(msgBuf, "online") == 0;
-        if (twinOnline && !wasOnline) publishAllSlots();   // Unity เพิ่งเปิด ส่งสถานะช่องจริงให้ทันที
+        if (twinOnline && !wasOnline) syncAllSlots();   // Unity เพิ่งเปิด ส่งรถจริงที่จอดอยู่ให้ทันที
         if (!twinOnline) {
-            for (uint8_t i = 0; i < 3; i++) slots[i].twinOverstay = false;
+            for (uint8_t i = 0; i < 3; i++) slots[i].twinOccupied = slots[i].twinOverstay = false;
         }
         return;
     }
 
-    // สถานะช่องจาก Unity -> ใช้ค่า overstay
+    // สถานะช่องจาก Unity -> มีรถในเกมไหม + overstay
     for (uint8_t i = 0; i < 3; i++) {
         if (strcmp(topic, slots[i].slotTopic) == 0) {
-            const char* p = strstr(msgBuf, "\"overstay\":");
-            if (p != nullptr) slots[i].twinOverstay = strncmp(p + 11, "true", 4) == 0;
+            jsonBool(msgBuf, "occupied", slots[i].twinOccupied);
+            jsonBool(msgBuf, "overstay", slots[i].twinOverstay);
+            Serial.printf("[TWIN %d] occupied=%d overstay=%d\n", UNITY_SLOTS[i], slots[i].twinOccupied, slots[i].twinOverstay);
             return;
         }
     }
@@ -223,6 +259,7 @@ void connectMqtt() {
     mqttTried   = true;
     lastMqttTry = millis();
     twinOnline  = false;
+    for (uint8_t i = 0; i < 3; i++) slots[i].twinOccupied = false;
 
     char clientId[48];
     snprintf(clientId, sizeof(clientId), "esp8266-%s-%06X", BOARD_NAME, (unsigned int)ESP.getChipId());
@@ -232,7 +269,7 @@ void connectMqtt() {
         mqtt.publish(topicBoardOnline, "online", true);
         mqtt.subscribe(topicTwinOnline);
         for (uint8_t i = 0; i < 3; i++) mqtt.subscribe(slots[i].slotTopic);
-        publishAllSlots();
+        syncAllSlots();
         Serial.println("[MQTT] connected");
     } else {
         Serial.printf("[MQTT] failed, state = %d\n", mqtt.state());

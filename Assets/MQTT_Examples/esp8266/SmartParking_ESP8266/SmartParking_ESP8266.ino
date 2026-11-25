@@ -1,10 +1,16 @@
 /*
   ====================================================================================
-  Smart Parking IoT - NodeMCU ESP8266 Firmware
+  Smart Parking IoT - NodeMCU ESP8266 "บอร์ด A" (ทางเข้า-ออก + ช่องจอด 1)
   (Wi-Fi + MQTT + RFID RC522 + Servo SG90 + HC-SR04 x2 + LED 2 สี + LCD 1602A I2C)
   เชื่อมกับฉาก SmartParkNew.unity ผ่าน MQTT (คอมโพเนนต์ MqttParkingBridge)
 
-  อ้างอิงการต่อสาย: Ardunio_New_Guid.pdf (NodeMCU ESP8266 + บอร์ดขยาย + Breadboard 60 แถว)
+  อ้างอิงการต่อสาย: Ardunio_New_Guid.pdf (ต่อสายจากขา NodeMCU ลง Breadboard โดยตรง ไม่ใช้บอร์ดขยาย
+  และไม่ใช้ตัวต้านทาน) ไฟ 5V เอาจากขา VIN (หรือ VU) ของ NodeMCU ซึ่งเป็นไฟจากสาย USB
+
+  ระบบทั้งหมดใช้ ESP8266 3 บอร์ด (ทุกบอร์ดต่อ Wi-Fi ส่งข้อมูลเข้า Unity เอง ไม่ต้องเดินสายถึงกัน)
+    บอร์ด A : ไฟล์นี้                                     LCD + RFID + Servo + ช่องจอด 1 + เซนเซอร์ทางออก
+    บอร์ด B : SmartParking_ESP8266_Slots.ino (SLOT_GROUP 1)  ช่องจอด 2, 3, 4
+    บอร์ด C : SmartParking_ESP8266_Slots.ino (SLOT_GROUP 2)  ช่องจอด 5, 6, 7
   ====================================================================================
 
   ตั้งค่า Arduino IDE
@@ -41,6 +47,7 @@
     - แตะบัตร RFID            -> ยกไม้กั้นทางเข้า 3 วินาที + ส่ง .../gate/enter ให้ Unity ยกไม้กั้นในเกม
     - รถจ่อหน้าทางออก (< 8 cm) -> ยกไม้กั้นค้างไว้ตลอดที่รถอยู่ + ส่ง .../gate/exit
     - รถเข้า/ออกช่องจอดหลัก    -> เปลี่ยนสีไฟ + ส่ง .../sensor/{MAIN_SLOT_UNITY} = 1/0 (Unity เสกรถ/เอารถออก)
+    - รถในเกมจอดช่องหลัก       -> ไฟแดงติดด้วย (อ่านจาก .../slot/{MAIN_SLOT_UNITY} ที่ Unity ส่งมา)
     - จอดเกิน 2 ชั่วโมง         -> ไฟแดงกระพริบ (หรือเมื่อ Unity แจ้ง overstay ซึ่งเร่งเวลาได้ด้วยปุ่ม TIME SPEED)
     - จอ LCD แสดงจำนวนช่องว่างทั้งลานจาก Unity (.../status) และเวลาจอดของช่องหลัก
     - สั่งเปิดไม้กั้นจริงจากภายนอกได้ เช่น python parking_mqtt_tool.py gate enter
@@ -71,7 +78,7 @@ const char* DEVICE_ID     = "PARK-01";      // ต้องตรงกับ de
 // 2. ตัวเลือกการทำงาน
 // ====================================================================================
 // 1 = โหมดทดสอบ: เปิด Serial Monitor (115200) และปิดเซนเซอร์ HC-SR04 ที่ขา RX/TX
-#define SERIAL_DEBUG   1
+#define SERIAL_DEBUG   0
 
 // ช่องจอดหลักบนโมเดลไปโผล่ที่ Slot ไหนใน Unity
 // 1-4 = ช่องปกติ (ใช้ LED เขียว), 5 = V.I.P, 6 = Accessibility, 7 = Maternity (ใช้ LED น้ำเงิน)
@@ -81,10 +88,10 @@ const char* DEVICE_ID     = "PARK-01";      // ต้องตรงกับ de
 // 1 = แยก Servo ทางออกไปขา D3 (ตามหมายเหตุใน PDF) -> LED ช่องหลักต้องย้ายไปต่อแบบติดค้าง โค้ดจะไม่คุม LED
 #define EXIT_SERVO_ON_D3 0
 
-// ความสว่างไฟแดง 0-255 (255 = digitalWrite HIGH เต็มที่)
-// PDF แนะนำ analogWrite(D3, 140) แต่ในวงจรนี้ LED เขียวกับแดงใช้ขาเดียวกัน
+// ความสว่างไฟแดง 0-255 (255 = digitalWrite HIGH เต็มที่ ไฟแดงชัด)
+// PDF แนะนำ analogWrite(D3, 140) เพื่อลดกระแสเพราะไม่มีตัวต้านทาน แต่ LED เขียวกับแดงใช้ขาเดียวกัน
 // ช่วงที่ PWM เป็น LOW ไฟเขียวจะติดสลับด้วย ทำให้เห็นเป็นสีส้ม/เหลือง ไม่ใช่สีแดง
-// วิธีลดกระแสที่ดีกว่าคือใส่ตัวต้านทาน 220 โอห์ม 1 ตัว คั่นระหว่างขา D3 กับแถวของ LED (ช่วยทั้ง 2 ดวง)
+// ถ้ายอมให้สีเพี้ยนเพื่อลดกระแส ให้เปลี่ยนเป็น 140
 #define RED_PWM_DUTY     255
 
 const int           SLOT_THRESHOLD_CM = 8;      // มีรถจอด ถ้าระยะน้อยกว่านี้ (โมเดลขนาดเล็ก)
@@ -141,6 +148,9 @@ GateState* const exitGate = &entranceGate;   // Servo ทางออกพ่�
 #endif
 
 // ตัวกรองสัญญาณรบกวนของ HC-SR04: ต้องอ่านได้ค่าใหม่ติดกันหลายครั้งก่อนเปลี่ยนสถานะ
+// สถานะไฟ LED ช่องจอด (ประกาศก่อนฟังก์ชันแรก เพราะ Arduino IDE สร้าง prototype ให้อัตโนมัติไว้ตรงนั้น)
+enum LedState { LED_UNSET, LED_FREE, LED_RED, LED_OFF };
+
 struct Debounce {
     bool    state;
     uint8_t count;
@@ -176,11 +186,13 @@ char msgBuf[MQTT_BUFFER_SIZE];
 Debounce      slotSensor = { false, 0 };   // state = มีรถในช่องหลัก
 Debounce      exitSensor = { false, 0 };   // state = มีรถจ่อทางออก
 unsigned long parkedAt   = 0;
+bool          owedFree   = false;   // รถจริงออกตอนเน็ตหลุด ยังไม่ได้บอก Unity
 
 // ข้อมูลที่ได้จาก Unity (Digital Twin)
 bool twinOnline   = false;
 int  twinFree     = -1;
 int  twinTotal    = -1;
+bool twinOccupied = false;   // ช่องหลักในเกมมีรถ (รวมรถที่ขับเข้าไปจอดหรือเสกจากปุ่มในเกม)
 bool twinOverstay = false;
 
 unsigned long lastMqttTry   = 0;
@@ -236,10 +248,14 @@ const char* mainSlotLabel() {
     }
 }
 
+// ช่องหลักมีรถ ถ้าเซนเซอร์จริงเจอรถ หรือในเกมมีรถจอดอยู่
+bool showOccupied() {
+    return slotSensor.state || (twinOnline && twinOccupied);
+}
+
 bool isOverstay() {
-    if (!slotSensor.state) return false;
-    if (millis() - parkedAt >= OVERSTAY_MS) return true;
-    return twinOnline && twinOverstay;
+    if (slotSensor.state && millis() - parkedAt >= OVERSTAY_MS) return true;
+    return showOccupied() && twinOnline && twinOverstay;
 }
 
 void renderLcd() {
@@ -264,10 +280,12 @@ void renderLcd() {
     if (MAIN_SLOT_UNITY >= 1 && MAIN_SLOT_UNITY <= 4) snprintf(label, sizeof(label), "SLOT%d", MAIN_SLOT_UNITY);
     else snprintf(label, sizeof(label), "%s", mainSlotLabel());
 
-    if (!slotSensor.state) {
+    if (!showOccupied()) {
         snprintf(line, sizeof(line), "%-7sFREE", label);
     } else if (isOverstay() && (millis() / 1000) % 2 == 0) {
         snprintf(line, sizeof(line), "%-7sOVERSTAY", label);
+    } else if (!slotSensor.state) {
+        snprintf(line, sizeof(line), "%-7sIN GAME", label);   // มีรถเฉพาะในเกม
     } else {
         unsigned long s = (millis() - parkedAt) / 1000UL;
         snprintf(line, sizeof(line), "%-7s%02lu:%02lu:%02lu", label, s / 3600UL, (s / 60UL) % 60UL, s % 60UL);
@@ -279,7 +297,6 @@ void renderLcd() {
 // 7. LED ช่องจอดหลัก (ขา D3 ขาเดียวคุม 2 ดวง)
 //    LOW = เขียว/น้ำเงินติด (ว่าง), HIGH = แดงติด (มีรถ), INPUT = ดับทั้งคู่ (ใช้ตอนกระพริบ)
 // ====================================================================================
-enum LedState { LED_UNSET, LED_FREE, LED_RED, LED_OFF };
 void setLed(LedState s);
 LedState ledShown = LED_UNSET;
 
@@ -311,7 +328,7 @@ void setLed(LedState s) {
 }
 
 void updateLed() {
-    if (!slotSensor.state) setLed(LED_FREE);
+    if (!showOccupied()) setLed(LED_FREE);
     else if (isOverstay()) setLed((millis() / 500) % 2 == 0 ? LED_RED : LED_OFF);
     else setLed(LED_RED);
 }
@@ -374,10 +391,28 @@ long readDistanceCm(uint8_t echoPin) {
     return (long)(us / 58UL);                            // แปลงเป็น cm
 }
 
-void publishSlotSensor() {
-    if (!mqtt.connected()) return;
-    mqtt.publish(topicSensor, slotSensor.state ? "1" : "0");
-    LOG("[SLOT] -> %s = %s\n", topicSensor, slotSensor.state ? "1" : "0");
+bool sendSlotSensor(bool occupied) {
+    if (!mqtt.connected()) return false;
+    LOG("[SLOT] -> %s = %s\n", topicSensor, occupied ? "1" : "0");
+    return mqtt.publish(topicSensor, occupied ? "1" : "0");
+}
+
+// เรียกตอนเซนเซอร์จริงเปลี่ยนสถานะ
+void reportSlotChange() {
+    if (slotSensor.state) {
+        owedFree = false;
+        sendSlotSensor(true);
+    } else {
+        owedFree = !sendSlotSensor(false);   // ส่งไม่ได้ (เน็ตหลุด) ค่อยส่งตอนต่อกลับ
+    }
+}
+
+// เรียกตอนเพิ่งต่อ MQTT หรือ Unity เพิ่งออนไลน์
+// ส่ง "0" เฉพาะตอนที่รถจริงออกไประหว่างเน็ตหลุด เพราะ Unity จะลบรถในช่องเมื่อได้ "0"
+// (ถ้าส่ง "0" ทุกครั้งที่ต่อเน็ต รถที่จอดอยู่ในเกมจะหายไป)
+void syncSlotSensor() {
+    if (slotSensor.state) sendSlotSensor(true);
+    else if (owedFree && sendSlotSensor(false)) owedFree = false;
 }
 
 void updateSlotSensor() {
@@ -386,7 +421,7 @@ void updateSlotSensor() {
 
     parkedAt     = millis();
     twinOverstay = false;
-    publishSlotSensor();
+    reportSlotChange();
 }
 
 void updateExitSensor() {
@@ -436,10 +471,12 @@ void onMqttMessage(char* topic, byte* payload, unsigned int length) {
         return;
     }
 
-    // สถานะช่องหลักจาก Unity -> ใช้ค่า overstay (Unity เร่งเวลาได้ด้วยปุ่ม TIME SPEED)
+    // สถานะช่องหลักจาก Unity -> มีรถในเกมไหม + overstay (Unity เร่งเวลาได้ด้วยปุ่ม TIME SPEED)
     if (strcmp(topic, topicSlot) == 0) {
         bool value;
+        if (jsonBool(msgBuf, "occupied", value)) twinOccupied = value;
         if (jsonBool(msgBuf, "overstay", value)) twinOverstay = value;
+        LOG("[TWIN] slot %d occupied=%d overstay=%d\n", MAIN_SLOT_UNITY, twinOccupied, twinOverstay);
         return;
     }
 
@@ -448,9 +485,10 @@ void onMqttMessage(char* topic, byte* payload, unsigned int length) {
         bool wasOnline = twinOnline;
         twinOnline = strcmp(msgBuf, "online") == 0;
         if (twinOnline && !wasOnline) {
-            publishSlotSensor();   // Unity เพิ่งเปิด ส่งสถานะช่องจริงให้ทันที
+            syncSlotSensor();   // Unity เพิ่งเปิด ส่งรถจริงที่จอดอยู่ให้ทันที
         } else if (!twinOnline) {
             twinFree = twinTotal = -1;
+            twinOccupied = false;
             twinOverstay = false;
         }
         return;
@@ -476,12 +514,13 @@ void connectMqtt() {
 
     twinOnline = false;
     twinFree = twinTotal = -1;
+    twinOccupied = false;
 
     char clientId[40];
     snprintf(clientId, sizeof(clientId), "esp8266-smartpark-%06X", (unsigned int)ESP.getChipId());
     LOG("[MQTT] connecting %s:%d ...\n", MQTT_BROKER, MQTT_PORT);
 
-    // ใช้ topic .../esp/online แยกจาก .../online ของ Unity (ของเดิมใช้ร่วมกัน ทำให้สถานะ Unity ผิด)
+    // ใช้ topic .../esp/gate/online แยกจาก .../online ของ Unity (ของเดิมใช้ร่วมกัน ทำให้สถานะ Unity ผิด)
     if (mqtt.connect(clientId, topicEspOnline, 0, true, "offline")) {
         mqtt.publish(topicEspOnline, "online", true);
         mqtt.subscribe(topicStatus);
@@ -489,7 +528,7 @@ void connectMqtt() {
         mqtt.subscribe(topicTwinOnline);
         snprintf(topicBuf, sizeof(topicBuf), "%s+", topicGatePrefix);
         mqtt.subscribe(topicBuf);
-        publishSlotSensor();
+        syncSlotSensor();
         LOG("[MQTT] connected\n");
     } else {
         LOG("[MQTT] failed, state = %d\n", mqtt.state());
@@ -533,7 +572,7 @@ void setup() {
     snprintf(topicSlot, sizeof(topicSlot), "%s/slot/%d", baseTopic, MAIN_SLOT_UNITY);
     snprintf(topicTwinOnline, sizeof(topicTwinOnline), "%s/online", baseTopic);
     snprintf(topicGatePrefix, sizeof(topicGatePrefix), "%s/gate/", baseTopic);
-    snprintf(topicEspOnline, sizeof(topicEspOnline), "%s/esp/online", baseTopic);
+    snprintf(topicEspOnline, sizeof(topicEspOnline), "%s/esp/gate/online", baseTopic);
 
     // LCD 1602A (I2C: SDA=D2, SCL=D1)
     Wire.begin(PIN_LCD_SDA, PIN_LCD_SCL);
