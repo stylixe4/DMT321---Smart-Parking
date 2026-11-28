@@ -1,6 +1,35 @@
 /*
-  Smart Parking IoT - บอร์ด B (ช่องจอด 2, 3, 4)
-  แยกขา Trig: D0 (ช่อง 2), D3 (ช่อง 3), D4 (ช่อง 4)
+  ====================================================================================
+  Smart Parking IoT - NodeMCU ESP8266 "บอร์ดช่องจอด" (บอร์ด B และ บอร์ด C)
+  HC-SR04 x3 + LED 2 สี x3 คู่ + Wi-Fi/MQTT
+  เชื่อมกับฉาก SmartParkNew.unity ผ่าน MQTT (คอมโพเนนต์ MqttParkingBridge)
+  ====================================================================================
+
+  ระบบทั้งหมดใช้ ESP8266 3 บอร์ด (ทุกบอร์ดต่อ Wi-Fi ส่งข้อมูลเข้า Unity เอง ไม่ต้องเดินสายถึงกัน)
+    บอร์ด A : SmartParking_ESP8266.ino        LCD + RFID + Servo + ช่องจอด 1 + เซนเซอร์ทางออก
+    บอร์ด B : ไฟล์นี้ ตั้ง SLOT_GROUP 1        ช่องจอด 2, 3, 4 (ช่องปกติ LED เขียว/แดง)
+    บอร์ด C : ไฟล์นี้ ตั้ง SLOT_GROUP 2        ช่องจอด 5, 6, 7 (VIP / Accessibility / Maternity LED น้ำเงิน/แดง)
+
+  ตั้งค่า Arduino IDE
+    - Board: "NodeMCU 1.0 (ESP-12E Module)" จาก "esp8266 by ESP8266 Community"
+    - ไลบรารี: PubSubClient by Nick O'Leary
+
+  ตารางขา (ช่อง ก/ข/ค = ช่องที่ 1/2/3 ของบอร์ดนี้)
+    D0 (GPIO16) -> Trig ของ HC-SR04 ทั้ง 3 ตัว (ใช้ร่วมกัน)
+    D5 (GPIO14) -> Echo ช่อง ก      D1 (GPIO5)  -> LED ช่อง ก
+    D6 (GPIO12) -> Echo ช่อง ข      D2 (GPIO4)  -> LED ช่อง ข
+    D8 (GPIO15) -> Echo ช่อง ค      D7 (GPIO13) -> LED ช่อง ค
+    LED แต่ละช่อง (ไม่ใช้ตัวต้านทาน ขาเดียวคุม 2 ดวง):
+      เขียว/น้ำเงิน : ขายาว (+) ที่ 3.3V, ขาสั้น (-) ที่ขาของช่อง  -> ติดเมื่อช่องว่าง (LOW)
+      แดง          : ขายาว (+) ที่ขาของช่อง, ขาสั้น (-) ที่ GND   -> ติดเมื่อมีรถ (HIGH)
+    HC-SR04 : VCC -> VIN (5V จาก USB), GND -> GND
+    ไม่ได้ใช้ขา RX/TX จึงไม่ต้องถอดสายตอนอัปโหลด และดู Serial Monitor (115200) ได้ตลอด
+    ไฟ LED บนตัวบอร์ด (ขา D4) ติดค้าง = ต่อ MQTT สำเร็จ, กระพริบ = กำลังเชื่อมต่อ
+
+  การทำงาน
+    - รถเข้า/ออกช่อง (< 8 cm)  -> เปลี่ยนสีไฟ + ส่ง .../sensor/{เลขช่อง} = 1/0 (Unity เสกรถ/เอารถออก)
+    - รถในเกมจอดช่อง           -> ไฟแดงติดด้วย (อ่านจาก .../slot/{เลขช่อง} ที่ Unity ส่งมา)
+    - จอดเกิน 2 ชั่วโมง          -> ไฟแดงกระพริบ (หรือเมื่อ Unity แจ้ง overstay ซึ่งเร่งเวลาได้ด้วยปุ่ม TIME SPEED)
 */
 
 #include <ESP8266WiFi.h>
@@ -8,19 +37,21 @@
 #include <string.h>
 
 // ====================================================================================
-// 1. ตั้งค่า Wi-Fi & MQTT Broker (ต้องตรงกับบอร์ด A และ Unity)
+// 1. ตั้งค่า Wi-Fi & MQTT Broker (ต้องเหมือนบอร์ด A)
 // ====================================================================================
-const char* WIFI_SSID     = "iQOO Z10 Turbo Pro";   // ถ้าเปลี่ยนเน็ตเป็น youcraf ให้แก้ตรงนี้ให้ตรงกัน
+const char* WIFI_SSID     = "iQOO Z10 Turbo Pro";   // ESP8266 ต่อได้เฉพาะ Wi-Fi 2.4 GHz (คลื่น 5 GHz ใช้ไม่ได้)
 const char* WIFI_PASSWORD = "jjlove444";
 const char* MQTT_BROKER   = "broker.hivemq.com";
 const int   MQTT_PORT     = 1883;
 
 const char* TOPIC_ROOT    = "dmt321/smartparking";
-const char* DEVICE_ID     = "PARK-01";
+const char* DEVICE_ID     = "PARK-01";      // ต้องตรงกับ deviceId ใน Unity (MqttParkingBridge)
 
 // ====================================================================================
-// 2. ตั้งค่าช่องจอด (1 = บอร์ด B ช่อง 2,3,4 | 2 = บอร์ด C ช่อง 5,6,7)
+// 2. บอร์ดนี้ดูแลช่องไหน
 // ====================================================================================
+// 1 = บอร์ด B : ช่อง 2, 3, 4  (ช่องปกติ)
+// 2 = บอร์ด C : ช่อง 5, 6, 7  (V.I.P, Accessibility, Maternity)
 #define SLOT_GROUP 1
 
 #if SLOT_GROUP == 1
@@ -33,15 +64,16 @@ const char* BOARD_NAME     = "slots-5-7";
 #error "SLOT_GROUP ต้องเป็น 1 หรือ 2"
 #endif
 
-const int           THRESHOLD_CM = 8;                            // ลดเหลือ 5 หรือ 6 ถ้าเซนเซอร์จับโดนพื้นโมเดล
-const unsigned long OVERSTAY_MS  = 2UL * 60UL * 60UL * 1000UL;
+const int           THRESHOLD_CM = 8;                            // มีรถจอด ถ้าระยะน้อยกว่านี้ (โมเดลขนาดเล็ก)
+const unsigned long OVERSTAY_MS  = 2UL * 60UL * 60UL * 1000UL;   // 2 ชั่วโมง
 
 // ====================================================================================
-// 3. ขา Pin (แยก Trig: D0, D3, D4 ไม่ใช้ RX/TX)
+// 3. ขา Pin (เลข GPIO)
 // ====================================================================================
-const uint8_t PIN_TRIG[3] = { 16, 0, 2 };    // D0, D3, D4
-const uint8_t PIN_ECHO[3] = { 14, 12, 15 };  // D5, D6, D8
-const uint8_t PIN_LED[3]  = { 5, 4, 13 };    // D1, D2, D7
+const uint8_t PIN_TRIG        = 16;              // D0
+const uint8_t PIN_ECHO[3]     = { 14, 12, 15 };  // D5, D6, D8
+const uint8_t PIN_LED[3]      = { 5, 4, 13 };    // D1, D2, D7
+const uint8_t PIN_STATUS_LED  = 2;               // D4 = LED บนตัวบอร์ด (ติดเมื่อเป็น LOW)
 
 // ====================================================================================
 // 4. สถานะ
@@ -52,14 +84,13 @@ PubSubClient mqtt(wifiClient);
 enum LedState { LED_UNSET, LED_FREE, LED_RED, LED_OFF };
 
 struct Slot {
-    bool          occupied;
-    uint8_t       agree;
+    bool          occupied;      // สถานะที่ยืนยันแล้ว
+    uint8_t       agree;         // นับค่าที่อ่านได้ต่างจากเดิมติดกัน
     unsigned long parkedAt;
-    bool          owedFree;
-    bool          twinOccupied;
-    bool          twinOverstay;
+    bool          owedFree;      // รถจริงออกตอนเน็ตหลุด ยังไม่ได้บอก Unity
+    bool          twinOccupied;  // ในเกมมีรถจอดช่องนี้ (ค่าจาก Unity)
+    bool          twinOverstay;  // ค่าจาก Unity
     LedState      ledShown;
-    long          lastCm;
     char          sensorTopic[96];
     char          slotTopic[96];
 };
@@ -77,11 +108,10 @@ bool          twinOnline    = false;
 bool          mqttTried     = false;
 unsigned long lastMqttTry   = 0;
 unsigned long lastSensorRun = 0;
-unsigned long lastDebugPrint = 0;
 uint8_t       sensorTurn    = 0;
 
 // ====================================================================================
-// 5. LED ช่องจอด
+// 5. LED ช่องจอด (1 ขาคุม 2 ดวง: LOW = เขียว/น้ำเงิน, HIGH = แดง, INPUT = ดับ)
 // ====================================================================================
 void setLed(uint8_t i, LedState s) {
     if (slots[i].ledShown == s) return;
@@ -97,11 +127,12 @@ void setLed(uint8_t i, LedState s) {
             digitalWrite(pin, HIGH);
             break;
         default:
-            pinMode(pin, INPUT);
+            pinMode(pin, INPUT);   // Hi-Z: ดับทั้งสองดวง (ใช้ตอนกระพริบ)
             break;
     }
 }
 
+// ช่องมีรถ ถ้าเซนเซอร์จริงเจอรถ หรือในเกมมีรถจอดอยู่
 bool showOccupied(const Slot& s) {
     return s.occupied || (twinOnline && s.twinOccupied);
 }
@@ -121,22 +152,18 @@ void updateLeds() {
 }
 
 // ====================================================================================
-// 6. HC-SR04 (แยก Trig + ตัดค่าหลอน 0-1 cm และ > 400 cm)
+// 6. HC-SR04 (Trig ร่วมขา D0 อ่านทีละตัว)
 // ====================================================================================
-long readDistanceCm(uint8_t idx) {
-    uint8_t trigPin = PIN_TRIG[idx];
-    uint8_t echoPin = PIN_ECHO[idx];
-
-    digitalWrite(trigPin, LOW);
-    delayMicroseconds(4);
-    digitalWrite(trigPin, HIGH);
+long readDistanceCm(uint8_t echoPin) {
+    digitalWrite(PIN_TRIG, LOW);
+    delayMicroseconds(2);
+    digitalWrite(PIN_TRIG, HIGH);
     delayMicroseconds(10);
-    digitalWrite(trigPin, LOW);
+    digitalWrite(PIN_TRIG, LOW);
 
-    unsigned long us = pulseIn(echoPin, HIGH, 25000UL);
-    long cm = (long)(us / 58UL);
-    if (us == 0 || cm < 2 || cm > 400) return 999;
-    return cm;
+    unsigned long us = pulseIn(echoPin, HIGH, 25000UL);   // timeout 25 ms (~4 เมตร)
+    if (us == 0) return 999;
+    return (long)(us / 58UL);                            // แปลงเป็น cm
 }
 
 bool sendSlot(uint8_t i, bool occupied) {
@@ -145,16 +172,20 @@ bool sendSlot(uint8_t i, bool occupied) {
     return mqtt.publish(slots[i].sensorTopic, occupied ? "1" : "0");
 }
 
+// เรียกตอนเซนเซอร์จริงเปลี่ยนสถานะ
 void reportSlotChange(uint8_t i) {
     Slot& s = slots[i];
     if (s.occupied) {
         s.owedFree = false;
         sendSlot(i, true);
     } else {
-        s.owedFree = !sendSlot(i, false);
+        s.owedFree = !sendSlot(i, false);   // ส่งไม่ได้ (เน็ตหลุด) ค่อยส่งตอนต่อกลับ
     }
 }
 
+// เรียกตอนเพิ่งต่อ MQTT หรือ Unity เพิ่งออนไลน์
+// ส่ง "0" เฉพาะช่องที่รถจริงออกไประหว่างเน็ตหลุด เพราะ Unity จะลบรถในช่องเมื่อได้ "0"
+// (ถ้าส่ง "0" ทุกครั้งที่ต่อเน็ต รถที่จอดอยู่ในเกมจะหายไป)
 void syncAllSlots() {
     for (uint8_t i = 0; i < 3; i++) {
         Slot& s = slots[i];
@@ -164,16 +195,15 @@ void syncAllSlots() {
 }
 
 void updateSensor(uint8_t i) {
-    long cm = readDistanceCm(i);
-    Slot& s = slots[i];
-    s.lastCm = cm;
+    long cm = readDistanceCm(PIN_ECHO[i]);
     bool reading = cm < THRESHOLD_CM;
+    Slot& s = slots[i];
 
     if (reading == s.occupied) {
         s.agree = 0;
         return;
     }
-    if (++s.agree < 4) return;   // ต้องตรงกัน 4 ครั้งติด (~1.2 วินาที) กันค่ากระโดด
+    if (++s.agree < 3) return;   // ค่าใหม่ต้องเหมือนกัน 3 ครั้งติด (~0.9 วินาที) กันสัญญาณรบกวน
 
     s.agree        = 0;
     s.occupied     = reading;
@@ -186,6 +216,7 @@ void updateSensor(uint8_t i) {
 // ====================================================================================
 // 7. MQTT
 // ====================================================================================
+// อ่านค่า true/false จาก JSON ของ Unity เช่น "occupied":true
 bool jsonBool(const char* json, const char* key, bool& out) {
     char pattern[32];
     snprintf(pattern, sizeof(pattern), "\"%s\":", key);
@@ -200,20 +231,23 @@ void onMqttMessage(char* topic, byte* payload, unsigned int length) {
     memcpy(msgBuf, payload, length);
     msgBuf[length] = '\0';
 
+    // Unity ออนไลน์/ออฟไลน์ (Last Will ของ Unity)
     if (strcmp(topic, topicTwinOnline) == 0) {
         bool wasOnline = twinOnline;
         twinOnline = strcmp(msgBuf, "online") == 0;
-        if (twinOnline && !wasOnline) syncAllSlots();
+        if (twinOnline && !wasOnline) syncAllSlots();   // Unity เพิ่งเปิด ส่งรถจริงที่จอดอยู่ให้ทันที
         if (!twinOnline) {
             for (uint8_t i = 0; i < 3; i++) slots[i].twinOccupied = slots[i].twinOverstay = false;
         }
         return;
     }
 
+    // สถานะช่องจาก Unity -> มีรถในเกมไหม + overstay
     for (uint8_t i = 0; i < 3; i++) {
         if (strcmp(topic, slots[i].slotTopic) == 0) {
             jsonBool(msgBuf, "occupied", slots[i].twinOccupied);
             jsonBool(msgBuf, "overstay", slots[i].twinOverstay);
+            Serial.printf("[TWIN %d] occupied=%d overstay=%d\n", UNITY_SLOTS[i], slots[i].twinOccupied, slots[i].twinOverstay);
             return;
         }
     }
@@ -221,7 +255,7 @@ void onMqttMessage(char* topic, byte* payload, unsigned int length) {
 
 void connectMqtt() {
     if (WiFi.status() != WL_CONNECTED || mqtt.connected()) return;
-    if (mqttTried && millis() - lastMqttTry < 5000) return;
+    if (mqttTried && millis() - lastMqttTry < 5000) return;   // ลองใหม่ทุก 5 วินาที
     mqttTried   = true;
     lastMqttTry = millis();
     twinOnline  = false;
@@ -229,13 +263,22 @@ void connectMqtt() {
 
     char clientId[48];
     snprintf(clientId, sizeof(clientId), "esp8266-%s-%06X", BOARD_NAME, (unsigned int)ESP.getChipId());
+    Serial.printf("[MQTT] connecting %s:%d as %s ...\n", MQTT_BROKER, MQTT_PORT, clientId);
+
     if (mqtt.connect(clientId, topicBoardOnline, 0, true, "offline")) {
         mqtt.publish(topicBoardOnline, "online", true);
         mqtt.subscribe(topicTwinOnline);
         for (uint8_t i = 0; i < 3; i++) mqtt.subscribe(slots[i].slotTopic);
         syncAllSlots();
         Serial.println("[MQTT] connected");
+    } else {
+        Serial.printf("[MQTT] failed, state = %d\n", mqtt.state());
     }
+}
+
+void updateStatusLed() {
+    bool on = mqtt.connected() || (millis() / 250) % 2 == 0;   // ติดค้าง = ออนไลน์, กระพริบ = กำลังต่อ
+    digitalWrite(PIN_STATUS_LED, on ? LOW : HIGH);
 }
 
 // ====================================================================================
@@ -251,15 +294,16 @@ void setup() {
     snprintf(topicTwinOnline, sizeof(topicTwinOnline), "%s/online", baseTopic);
     snprintf(topicBoardOnline, sizeof(topicBoardOnline), "%s/esp/%s/online", baseTopic, BOARD_NAME);
 
+    pinMode(PIN_TRIG, OUTPUT);
+    digitalWrite(PIN_TRIG, LOW);
+    pinMode(PIN_STATUS_LED, OUTPUT);
+    digitalWrite(PIN_STATUS_LED, HIGH);
+
     for (uint8_t i = 0; i < 3; i++) {
         slots[i] = Slot();
         slots[i].ledShown = LED_UNSET;
-        slots[i].lastCm = 999;
         snprintf(slots[i].sensorTopic, sizeof(slots[i].sensorTopic), "%s/sensor/%d", baseTopic, UNITY_SLOTS[i]);
         snprintf(slots[i].slotTopic, sizeof(slots[i].slotTopic), "%s/slot/%d", baseTopic, UNITY_SLOTS[i]);
-
-        pinMode(PIN_TRIG[i], OUTPUT);
-        digitalWrite(PIN_TRIG[i], LOW);
         pinMode(PIN_ECHO[i], INPUT);
         setLed(i, LED_FREE);
     }
@@ -268,6 +312,7 @@ void setup() {
     WiFi.mode(WIFI_STA);
     WiFi.setAutoReconnect(true);
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    Serial.printf("[WiFi] connecting %s ...\n", WIFI_SSID);
 
     mqtt.setServer(MQTT_BROKER, MQTT_PORT);
     mqtt.setBufferSize(MQTT_BUFFER_SIZE);
@@ -282,20 +327,13 @@ void loop() {
         else mqtt.loop();
     }
 
+    // อ่าน HC-SR04 ทีละตัวทุก 100 ms (แต่ละตัวถูกอ่านทุก 300 ms)
     if (millis() - lastSensorRun >= 100) {
         lastSensorRun = millis();
         updateSensor(sensorTurn);
         sensorTurn = (sensorTurn + 1) % 3;
     }
 
-    // แสดงค่าระยะสดของทั้ง 3 ช่องใน Serial Monitor ทุก 500 ms
-    if (millis() - lastDebugPrint >= 500) {
-        lastDebugPrint = millis();
-        Serial.printf("[DIST] ช่อง %d = %ld cm | ช่อง %d = %ld cm | ช่อง %d = %ld cm\n",
-                      UNITY_SLOTS[0], slots[0].lastCm,
-                      UNITY_SLOTS[1], slots[1].lastCm,
-                      UNITY_SLOTS[2], slots[2].lastCm);
-    }
-
     updateLeds();
+    updateStatusLed();
 }

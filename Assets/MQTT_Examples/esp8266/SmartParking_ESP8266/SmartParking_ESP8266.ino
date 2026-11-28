@@ -66,8 +66,8 @@
 // ====================================================================================
 // 1. ตั้งค่า Wi-Fi & MQTT Broker
 // ====================================================================================
-const char* WIFI_SSID     = "แว๊ อุแว๊ เจ";   // ESP8266 ต่อได้เฉพาะ Wi-Fi 2.4 GHz (คลื่น 5 GHz ใช้ไม่ได้)
-const char* WIFI_PASSWORD = "+SCRONGLED";
+const char* WIFI_SSID     = "iQOO Z10 Turbo Pro";   // ESP8266 ต่อได้เฉพาะ Wi-Fi 2.4 GHz (คลื่น 5 GHz ใช้ไม่ได้)
+const char* WIFI_PASSWORD = "jjlove444";
 const char* MQTT_BROKER   = "broker.hivemq.com";
 const int   MQTT_PORT     = 1883;
 
@@ -78,7 +78,7 @@ const char* DEVICE_ID     = "PARK-01";      // ต้องตรงกับ de
 // 2. ตัวเลือกการทำงาน
 // ====================================================================================
 // 1 = โหมดทดสอบ: เปิด Serial Monitor (115200) และปิดเซนเซอร์ HC-SR04 ที่ขา RX/TX
-#define SERIAL_DEBUG 0
+#define SERIAL_DEBUG   0
 
 // ช่องจอดหลักบนโมเดลไปโผล่ที่ Slot ไหนใน Unity
 // 1-4 = ช่องปกติ (ใช้ LED เขียว), 5 = V.I.P, 6 = Accessibility, 7 = Maternity (ใช้ LED น้ำเงิน)

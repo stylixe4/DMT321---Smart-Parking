@@ -12,6 +12,8 @@ using UnityEngine.UI;
 // - ตั้ง Canvas Scaler ให้ Scale With Screen Size (1920x1080) => UI ขยาย/ย่อตามจอ โดยสัดส่วนไม่เบี้ยว
 // - ยึด Panel ไว้กับมุมจอ (Anchor) => จอกว้าง/แคบ Panel ก็ยังเกาะขอบจอ ไม่ทับกัน
 // - ใช้ GameObject เดิมทั้งหมด (ชื่อเดิม) ของตกแต่งที่สร้างใหม่จะขึ้นต้นด้วย "HUD_" กดซ้ำได้ไม่ซ้อนกัน
+// - Layout แบบ Dashboard: แถบหัวด้านบน (ชื่อระบบ + Warning), คอลัมน์ซ้าย (สถานะ + Park timer),
+//   คอลัมน์ขวา (ปุ่ม Slot + Time speed + EVENT LOG) และภาพ 3D อยู่ตรงกลาง (HudViewportFitter ย่อกล้องให้ไม่โดน UI บัง)
 public static class SmartParkingHUDBuilder
 {
     private const string SlimRoot = "Assets/SlimUI/Modern Menu 1/";
@@ -21,13 +23,18 @@ public static class SmartParkingHUDBuilder
 
     // ขนาดอ้างอิงของ Layout (ออกแบบที่ 1920x1080 แล้วให้ Canvas Scaler ขยายตามจอ)
     private static readonly Vector2 ReferenceResolution = new Vector2(1920f, 1080f);
-    private const float Margin = 40f;
-    private const float Gap = 16f;
+    private const float Margin = 24f;
+    private const float Gap = 10f;
+    private const float TopBarHeight = 96f;
+    private const float TitleWidth = 720f;
     private const float LeftWidth = 440f;
     private const float RightWidth = 400f;
     private const float HeaderHeight = 40f;
     private const float RowHeight = 34f;
     private const float RowStep = 36f;
+
+    // ระยะจากขอบบนจอถึงหัวคอลัมน์ซ้าย/ขวา (ใต้แถบหัว)
+    private static float ColumnTop => Margin + TopBarHeight + Gap;
 
     private static readonly Color PanelFill = new Color(0.055f, 0.063f, 0.082f, 0.86f);
     private static readonly Color FrameTint = new Color(1f, 1f, 1f, 0.35f);
@@ -54,7 +61,7 @@ public static class SmartParkingHUDBuilder
         Transform root = canvas.transform;
 
         // ---------- ซ้ายบน: ชื่อระบบ ----------
-        var title = PlacePanel(root, "Title_Panel", new Vector2(0, 1), new Vector2(Margin, -32f), new Vector2(720f, 96f), false);
+        var title = PlacePanel(root, "Title_Panel", new Vector2(0, 1), new Vector2(Margin, -Margin), new Vector2(TitleWidth, TopBarHeight), false);
         RectTransform liveDot = null;
         TMP_Text clock = null;
         if (title != null)
@@ -86,7 +93,7 @@ public static class SmartParkingHUDBuilder
         }
 
         // ---------- ซ้าย: Availability ----------
-        float y = -32f - 96f - Gap;
+        float y = -ColumnTop;
         var avail = PlacePanel(root, "Availability_Panel", new Vector2(0, 1), new Vector2(Margin, y), new Vector2(LeftWidth, 144f), true);
         TMP_Text availDetail = null;
         RectTransform barFill = null;
@@ -149,10 +156,12 @@ public static class SmartParkingHUDBuilder
             }
         }
 
-        // ---------- ขวาบน: Park timer ----------
+        y -= 56f + Gap;
+
+        // ---------- ซ้ายล่าง: Park timer ----------
         float specialHeaderTop = HeaderHeight + 10f + 4 * RowStep + 10f;
-        float timerHeight = specialHeaderTop + HeaderHeight + 10f + 3 * RowStep + 12f;
-        var timer = PlacePanel(root, "Parktimer_panel", new Vector2(1, 1), new Vector2(-Margin, -32f), new Vector2(RightWidth, timerHeight), true);
+        float timerHeight = TimerPanelHeight();
+        var timer = PlacePanel(root, "Parktimer_panel", new Vector2(0, 1), new Vector2(Margin, y), new Vector2(LeftWidth, timerHeight), true);
         if (timer != null)
         {
             Header(timer, Child<TMP_Text>(timer, "Timer_text"), "PARK TIMER  |  NORMAL", 0f);
@@ -161,10 +170,16 @@ public static class SmartParkingHUDBuilder
             Rows(timer, specialHeaderTop + HeaderHeight + 10f, "slot_vip_timer", "slot_accessibility_timer", "slot_maternity_timer");
         }
 
-        // ---------- ล่างกลาง: Warning ----------
-        var warning = PlacePanel(root, "Warning_panel", new Vector2(0.5f, 0), new Vector2(0f, 32f), new Vector2(820f, 72f), true);
+        // ---------- แถบหัว ขวาของชื่อระบบ: Warning (ยืดถึงขอบขวาจอ) ----------
+        var warning = PlacePanel(root, "Warning_panel", new Vector2(0, 1), new Vector2(Margin + TitleWidth + Gap, -Margin), new Vector2(400f, TopBarHeight), true);
         if (warning != null)
         {
+            warning.anchorMin = new Vector2(0, 1);
+            warning.anchorMax = new Vector2(1, 1);
+            warning.pivot = new Vector2(0, 1);
+            warning.offsetMin = new Vector2(Margin + TitleWidth + Gap, -Margin - TopBarHeight);
+            warning.offsetMax = new Vector2(-Margin, -Margin);
+
             AccentBar(warning, 0f, 0f, 6f, true);
 
             var head = Child<TMP_Text>(warning, "Warning_text");
@@ -191,11 +206,20 @@ public static class SmartParkingHUDBuilder
             }
         }
 
-        // ---------- ขวา ใต้ Park timer: ปุ่ม Slot 1-7 ----------
+        // ---------- ขวาบน: ปุ่ม Slot 1-7 ----------
         BuildSlotButtons(root);
 
         // ---------- ขวา ใต้ปุ่ม Slot: TIME SPEED + MQTT ----------
         BuildTimePanel(root);
+
+        // ---------- ขวาล่าง: EVENT LOG (ยืดถึงขอบล่างจอ) ----------
+        var eventLog = BuildEventLog(root);
+
+        // ---------- ภาพ 3D อยู่ตรงกลาง ไม่โดน Panel บัง ----------
+        SetupViewport(canvas,
+            new[] { avail, normal, special, reserved, timer },
+            new[] { FindDeep(root, SlotPanelName) as RectTransform, FindDeep(root, TimePanelName) as RectTransform, eventLog },
+            new[] { title, warning });
 
         WireUI(availDetail, barFill, clock, liveDot);
         SetupBlinkMaterial();
@@ -257,7 +281,7 @@ public static class SmartParkingHUDBuilder
         int count = Mathf.Max(1, spawner.slots.Count);
         int rows = Mathf.CeilToInt(count / (float)perRow);
         float panelHeight = HeaderHeight + 10f + rows * buttonHeight + (rows - 1) * gap + 14f;
-        float top = -32f - TimerPanelHeight() - Gap;
+        float top = -ColumnTop;
 
         var panel = PlacePanel(root, SlotPanelName, new Vector2(1, 1), new Vector2(-Margin, top), new Vector2(RightWidth, panelHeight), true);
         if (panel == null) return;
@@ -419,7 +443,7 @@ public static class SmartParkingHUDBuilder
         const float pad = 12f, gap = 8f, buttonTop = HeaderHeight + 10f, buttonHeight = 52f;
         float statusTop = buttonTop + buttonHeight + 18f;
         float panelHeight = statusTop + 22f + 12f;
-        float top = -32f - TimerPanelHeight() - Gap - SlotPanelHeight(manager.Slots.Count) - Gap;
+        float top = -ColumnTop - SlotPanelHeight(manager.Slots.Count) - Gap;
 
         var panel = PlacePanel(root, TimePanelName, new Vector2(1, 1), new Vector2(-Margin, top), new Vector2(RightWidth, panelHeight), true);
         if (panel == null) return null;
@@ -508,6 +532,129 @@ public static class SmartParkingHUDBuilder
         bridge.statusDot = dot;
         EditorUtility.SetDirty(bridge);
         return bridge;
+    }
+
+    private static float TimePanelHeight()
+    {
+        const float buttonTop = HeaderHeight + 10f, buttonHeight = 52f;
+        float statusTop = buttonTop + buttonHeight + 18f;
+        return statusTop + 22f + 12f;
+    }
+
+    // ==========================================================
+    // EVENT LOG: เหตุการณ์ล่าสุดอยู่บนสุด (RX / TX / ACK / NET / PARK / GATE / WARN)
+    // ==========================================================
+    private const string EventLogPanelName = "EventLog_Panel";
+
+    [MenuItem("Tools/Smart Parking/Build Event Log Panel")]
+    public static void BuildEventLogMenu()
+    {
+        if (!LoadAssets()) return;
+        Canvas canvas = FindCanvas();
+        if (canvas == null)
+        {
+            EditorUtility.DisplayDialog("Smart Parking HUD", "ไม่พบ Canvas ในฉากที่เปิดอยู่", "OK");
+            return;
+        }
+        SetupCanvas(canvas);
+        BuildEventLog(canvas.transform);
+        EditorSceneManager.MarkSceneDirty(SceneManager.GetActiveScene());
+        Debug.Log("[Smart Parking] Event log panel built. กด Ctrl+S เพื่อบันทึกฉาก");
+    }
+
+    private static RectTransform BuildEventLog(Transform root)
+    {
+        var manager = Object.FindFirstObjectByType<ParkingLotManager>();
+        int slotCount = manager != null ? manager.Slots.Count : 7;
+
+        if (FindDeep(root, EventLogPanelName) == null)
+        {
+            var go = new GameObject(EventLogPanelName, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+            go.layer = root.gameObject.layer;
+            go.transform.SetParent(root, false);
+            Undo.RegisterCreatedObjectUndo(go, "Event Log Panel");
+        }
+
+        float top = ColumnTop + SlotPanelHeight(slotCount) + Gap + TimePanelHeight() + Gap;
+        var panel = PlacePanel(root, EventLogPanelName, new Vector2(1, 1), new Vector2(-Margin, -top), new Vector2(RightWidth, 300f), true);
+        if (panel == null) return null;
+
+        // ยืดลงไปถึงขอบล่างจอ (จอสูงแค่ไหนก็เต็มพอดี)
+        panel.anchorMin = new Vector2(1, 0);
+        panel.anchorMax = new Vector2(1, 1);
+        panel.pivot = new Vector2(1, 1);
+        panel.offsetMin = new Vector2(-Margin - RightWidth, Margin);
+        panel.offsetMax = new Vector2(-Margin, -top);
+
+        var header = AddText(panel, "Header", fontBold, 18f, Color.white, TextAlignmentOptions.Left, 8f);
+        Header(panel, header, "EVENT LOG  <color=#" + ColorUtility.ToHtmlStringRGB(LabelColor) + ">|  NEWEST FIRST</color>", 0f);
+        header.transform.SetAsLastSibling();
+
+        var body = AddText(panel, "Body", fontBody, 15f, Color.white, TextAlignmentOptions.TopLeft, 0.5f);
+        body.textWrappingMode = TextWrappingModes.Normal;
+        body.overflowMode = TextOverflowModes.Truncate;
+        body.lineSpacing = 4f;
+        Stretch(body.rectTransform);
+        body.rectTransform.offsetMin = new Vector2(18f, 12f);
+        body.rectTransform.offsetMax = new Vector2(-14f, -(HeaderHeight + 10f));
+        body.text = "<color=#" + ColorUtility.ToHtmlStringRGB(LabelColor) + ">waiting for events...</color>";
+
+        var log = panel.GetComponent<EventLogPanel>();
+        if (log == null) log = Undo.AddComponent<EventLogPanel>(panel.gameObject);
+        else Undo.RecordObject(log, "Event Log Panel");
+        log.body = body;
+        log.manager = manager;
+        EditorUtility.SetDirty(log);
+
+        // ปุ่ม CLEAR มุมขวาของหัวแผง
+        var clear = AddImage(panel, "ClearButton", null, new Color(0.08f, 0.09f, 0.11f, 0.92f));
+        clear.raycastTarget = true;
+        SetRect(clear.rectTransform, new Vector2(1, 1), new Vector2(1, 1), new Vector2(1, 1), new Vector2(-10f, -7f), new Vector2(72f, 28f));
+        var clearFrame = AddImage(clear.transform, "Frame", frameSprite, new Color(1f, 1f, 1f, 0.45f));
+        clearFrame.type = Image.Type.Sliced;
+        clearFrame.pixelsPerUnitMultiplier = 1f;
+        Stretch(clearFrame.rectTransform);
+        var clearLabel = AddText(clear.transform, "Label", fontBold, 12f, Color.white, TextAlignmentOptions.Center, 3f);
+        Stretch(clearLabel.rectTransform);
+        clearLabel.text = "CLEAR";
+        clear.transform.SetAsLastSibling();
+
+        var button = clear.gameObject.AddComponent<Button>();
+        button.targetGraphic = clearFrame;
+        button.transition = Selectable.Transition.ColorTint;
+        button.navigation = new Navigation { mode = Navigation.Mode.None };
+        UnityEventTools.AddPersistentListener(button.onClick, log.Clear);
+        EditorUtility.SetDirty(button);
+
+        return panel;
+    }
+
+    // ==========================================================
+    // ภาพ 3D ตรงกลาง: กล้องวาดเฉพาะช่องว่างระหว่างคอลัมน์ (ไม่โดน UI บัง) กด H ซ่อน/แสดงคอลัมน์
+    // ==========================================================
+    private static void SetupViewport(Canvas canvas, RectTransform[] left, RectTransform[] right, RectTransform[] top)
+    {
+        var fitter = canvas.GetComponent<HudViewportFitter>();
+        if (fitter == null) fitter = Undo.AddComponent<HudViewportFitter>(canvas.gameObject);
+        else Undo.RecordObject(fitter, "HUD Viewport");
+
+        Camera cam = Camera.main;
+        if (cam == null)
+        {
+            var follow = Object.FindFirstObjectByType<CameraFollow>();
+            if (follow != null) cam = follow.GetComponent<Camera>();
+        }
+        if (cam == null) Debug.LogWarning("[Smart Parking] ไม่พบกล้องหลัก (Main Camera) — ใส่ที่ HudViewportFitter > Target Camera เอง");
+
+        fitter.targetCamera = cam;
+        fitter.leftColumn = System.Array.FindAll(left, r => r != null);
+        fitter.rightColumn = System.Array.FindAll(right, r => r != null);
+        fitter.topBar = System.Array.FindAll(top, r => r != null);
+        fitter.gap = Gap;
+        fitter.bottomMargin = Margin;
+        fitter.frameSprite = frameSprite;
+        fitter.frameColor = new Color(accent.r, accent.g, accent.b, 0.55f);
+        EditorUtility.SetDirty(fitter);
     }
 
     // ==========================================================

@@ -173,6 +173,7 @@ public class MqttParkingBridge : MonoBehaviour
         if (acceptCommands) client.Subscribe(BaseTopic + "/cmd");
         if (acceptSensorTopics) client.Subscribe(BaseTopic + "/sensor/+");
         client.Subscribe(BaseTopic + "/gate/+");
+        client.Subscribe(BaseTopic + "/esp/#"); // สถานะออนไลน์ของบอร์ด ESP8266 (แสดงใน EVENT LOG)
         client.Start();
         Log($"กำลังเชื่อมต่อ {brokerHost}:{brokerPort} (client id: {id}) topic: {BaseTopic}/#");
     }
@@ -279,19 +280,25 @@ public class MqttParkingBridge : MonoBehaviour
             {
                 var s = slots[i];
                 if (s != null) lastSlots[i] = new SlotSnapshot { occupied = s.IsOccupied, reserved = s.IsReserved, overstay = s.IsOverstay };
-                PublishSlot(i);
+                PublishSlot(i, false);
             }
+            ParkingEventLog.Add(ParkingEventKind.TX, $"status + slot/1-{slots.Count} (free {msg.freeSlots}/{msg.totalSlots})");
             lastTimeScale = manager.TimeScale;
             lastWarning = manager.CurrentWarning;
         }
         if (log && logToConsole) Log($"ส่งสถานะ → {BaseTopic}/status (ว่าง {msg.freeSlots}/{msg.totalSlots}, x{msg.timeScale:0.##})");
     }
 
-    private void PublishSlot(int index)
+    private void PublishSlot(int index, bool logEvent = true)
     {
         var s = manager.Slots[index];
         if (s == null) return;
         client.Publish($"{BaseTopic}/slot/{index + 1}", JsonUtility.ToJson(BuildSlot(index, s)), retainState);
+        if (logEvent)
+        {
+            string state = s.IsOccupied ? "occupied" : s.IsReserved ? "reserved" : "free";
+            ParkingEventLog.Add(ParkingEventKind.TX, $"slot/{index + 1} {state}{(s.IsOverstay ? " overstay" : "")}");
+        }
     }
 
     public ParkingStatusMessage BuildStatus()
@@ -361,11 +368,26 @@ public class MqttParkingBridge : MonoBehaviour
         string topic = message.Topic;
         string text = message.Text.Trim();
 
+        // 0. สถานะบอร์ด ESP8266 (.../esp/gate/online, .../esp/slots-2-4/online, ...)
+        string espPrefix = BaseTopic + "/esp/";
+        if (topic.StartsWith(espPrefix, StringComparison.Ordinal))
+        {
+            string rest = topic.Substring(espPrefix.Length);
+            if (rest == "online" || rest.EndsWith("/online", StringComparison.Ordinal))
+            {
+                string board = rest == "online" ? "esp" : rest.Substring(0, rest.Length - "/online".Length);
+                bool up = text.Equals("online", StringComparison.OrdinalIgnoreCase);
+                ParkingEventLog.Add(up ? ParkingEventKind.NET : ParkingEventKind.WARN, $"board {board} {(up ? "online" : "offline")}");
+            }
+            return;
+        }
+
         // 1. รับคำสั่งควบคุมทั่วไป (.../cmd)
         if (topic == BaseTopic + "/cmd")
         {
             if (message.Retained) return; // ไม่ทำคำสั่งเก่าที่ค้างอยู่ใน broker ซ้ำ
             Log($"รับคำสั่ง ← {topic} : {text}");
+            ParkingEventLog.Add(ParkingEventKind.RX, "cmd " + text);
             var result = ExecuteCommand(text);
             PublishAck(result);
             return;
@@ -377,6 +399,7 @@ public class MqttParkingBridge : MonoBehaviour
         {
             string gateTarget = topic.Substring(gatePrefix.Length).Trim().ToLowerInvariant();
             Log($"ไม้กั้น ← {topic} : {text}");
+            ParkingEventLog.Add(ParkingEventKind.RX, $"gate/{gateTarget} {text}");
             OpenGate(gateTarget, 3f);
             return;
         }
@@ -390,14 +413,17 @@ public class MqttParkingBridge : MonoBehaviour
             if (slotNumber < 1 || slotNumber > 7)
             {
                 Debug.LogWarning($"[MQTT] topic เซนเซอร์ไม่ถูกต้อง ({key}): {topic}");
+                ParkingEventLog.Add(ParkingEventKind.WARN, $"bad sensor topic: sensor/{key}");
                 return;
             }
             if (!TryParseOccupied(text, out bool occupied))
             {
                 Debug.LogWarning($"[MQTT] ค่าเซนเซอร์ไม่ถูกต้อง ({text}) ใช้ 1/0, true/false, occupied/free");
+                ParkingEventLog.Add(ParkingEventKind.WARN, $"bad sensor value: sensor/{slotNumber} = {text}");
                 return;
             }
             Log($"เซนเซอร์ ← slot {slotNumber} = {(occupied ? "มีรถ" : "ว่าง")}");
+            ParkingEventLog.Add(ParkingEventKind.RX, $"sensor/{slotNumber} = {(occupied ? "1 (car)" : "0 (empty)")}");
             var result = SetSlotFromSensor(slotNumber, occupied);
             result.cmd = "sensor";
             if (!result.ok) PublishAck(result);
@@ -591,6 +617,8 @@ public class MqttParkingBridge : MonoBehaviour
 
     private void PublishAck(CommandResult result)
     {
+        string target = result.slot > 0 ? $" slot {result.slot}" : "";
+        ParkingEventLog.Add(result.ok ? ParkingEventKind.ACK : ParkingEventKind.ERR, $"{result.cmd}{target} {(result.ok ? "accepted" : "failed")}");
         if (logToConsole) Log($"ผลคำสั่ง {result.cmd}: {(result.ok ? "OK" : "ไม่สำเร็จ")} - {result.message}");
         if (client != null) client.Publish(BaseTopic + "/ack", JsonUtility.ToJson(result), false);
     }
@@ -660,8 +688,10 @@ public class MqttParkingBridge : MonoBehaviour
         var state = State;
         string error = client != null ? client.LastError : null;
         if (!force && state == shownState && error == shownError) return;
+        var previousState = shownState;
         shownState = state;
         shownError = error;
+        LogConnectionEvent(previousState, state, error);
 
         string word;
         Color color;
@@ -684,6 +714,31 @@ public class MqttParkingBridge : MonoBehaviour
 
         if (state == MqttClientLite.ConnectionState.Connected) Log($"เชื่อมต่อแล้ว ✓ {brokerHost}:{brokerPort}  topic: {BaseTopic}/#");
         else if (state == MqttClientLite.ConnectionState.Reconnecting && !string.IsNullOrEmpty(error)) Debug.LogWarning($"[MQTT] หลุดการเชื่อมต่อ กำลังต่อใหม่... ({error})");
+    }
+
+    private void LogConnectionEvent(MqttClientLite.ConnectionState previous, MqttClientLite.ConnectionState state, string error)
+    {
+        if (previous == state)
+        {
+            if (state == MqttClientLite.ConnectionState.Reconnecting && !string.IsNullOrEmpty(error))
+                ParkingEventLog.Add(ParkingEventKind.WARN, "MQTT retry: " + error);
+            return;
+        }
+        switch (state)
+        {
+            case MqttClientLite.ConnectionState.Connected:
+                ParkingEventLog.Add(ParkingEventKind.NET, $"MQTT connected {brokerHost}:{brokerPort}");
+                break;
+            case MqttClientLite.ConnectionState.Connecting:
+                ParkingEventLog.Add(ParkingEventKind.NET, $"MQTT connecting {brokerHost}:{brokerPort}");
+                break;
+            case MqttClientLite.ConnectionState.Reconnecting:
+                ParkingEventLog.Add(ParkingEventKind.WARN, "MQTT lost, reconnecting" + (string.IsNullOrEmpty(error) ? "" : ": " + error));
+                break;
+            default:
+                if ((int)previous >= 0) ParkingEventLog.Add(ParkingEventKind.NET, "MQTT offline");
+                break;
+        }
     }
 
     private void Log(string text)

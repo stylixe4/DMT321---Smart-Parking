@@ -12,6 +12,7 @@ public class GateController : MonoBehaviour
     private int carsInZone = 0;        // นับจำนวนรถที่อยู่ในระยะเซนเซอร์
     private float externalOpenTimer = 0f; // เวลาเปิดค้างตามคำสั่งภายนอก (RFID / MQTT)
     private bool initialized = false;
+    private bool wasOpen = false;      // ใช้บันทึกลง EVENT LOG ตอนไม้กั้นเปลี่ยนสถานะ
 
     private void Awake()
     {
@@ -42,6 +43,12 @@ public class GateController : MonoBehaviour
 
         // ถ้ารถอยู่ในระยะเซนเซอร์ หรือได้รับคำสั่งเปิดจาก RFID/MQTT ให้ยกขึ้น ไม่อย่างนั้นให้ลดลง
         bool shouldOpen = carsInZone > 0 || externalOpenTimer > 0f;
+        if (shouldOpen != wasOpen)
+        {
+            wasOpen = shouldOpen;
+            string source = carsInZone > 0 ? "car detected" : "RFID/MQTT";
+            ParkingEventLog.Add(ParkingEventKind.GATE, shouldOpen ? $"{GateName()} gate open ({source})" : $"{GateName()} gate closed");
+        }
         Quaternion targetRot = shouldOpen ? openRot : closedRot;
         gateArm.localRotation = Quaternion.Slerp(gateArm.localRotation, targetRot, Time.deltaTime * smoothSpeed);
     }
@@ -51,6 +58,14 @@ public class GateController : MonoBehaviour
     {
         InitRotations();
         externalOpenTimer = Mathf.Max(externalOpenTimer, duration);
+    }
+
+    private string GateName()
+    {
+        string n = gameObject.name.ToLowerInvariant();
+        if (n.Contains("entr") || n.Contains("enter")) return "entrance";
+        if (n.Contains("exit")) return "exit";
+        return gameObject.name;
     }
 
     [ContextMenu("Test Open (3s)")]
